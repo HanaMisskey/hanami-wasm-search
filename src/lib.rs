@@ -1,7 +1,9 @@
 use wasm_bindgen::prelude::*;
 use serde::{Serialize, Deserialize};
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use wana_kana::ConvertJapanese;
+
+type Postings = HashMap<String, Vec<String>>;
 
 // 2-gram（バイグラム）トークン化関数
 fn tokenize_2gram(text: &str) -> Vec<String> {
@@ -43,13 +45,12 @@ struct EmojisData {
 }
 
 // Changed from Vec<u32> to Vec<String> for doc IDs
-type Postings = FxHashMap<String, Vec<String>>;
 
 #[wasm_bindgen]
 #[derive(Serialize, Deserialize)]
 pub struct Index {
     postings: Postings,
-    doc_len: FxHashMap<String, usize>, // Changed from u32 to String for doc IDs
+    doc_len: HashMap<String, usize>, // Changed from u32 to String for doc IDs
     n_docs: usize,
     k1: f32,
     b: f32,
@@ -82,7 +83,7 @@ impl Index {
 
     #[wasm_bindgen(js_name = "newWithParams")]
     pub fn with_params(k1: f32, b: f32) -> Index {
-        Index { postings: FxHashMap::default(), doc_len: FxHashMap::default(), n_docs: 0, k1, b }
+        Index { postings: HashMap::default(), doc_len: HashMap::default(), n_docs: 0, k1, b }
     }
 
     pub fn set_params(&mut self, k1: f32, b: f32) { self.k1 = k1; self.b = b; }
@@ -104,7 +105,7 @@ impl Index {
             self.doc_len.insert(doc.name.clone(), doc.aliases.len() + 1); // +1 for name
             self.n_docs += 1;
             
-            let mut seen = FxHashSet::default();
+            let mut seen = HashSet::default();
             // 名前自体もインデックスに追加
             seen.insert(doc.name.clone());
             self.postings.entry(doc.name.clone()).or_default().push(doc.name.clone());
@@ -179,10 +180,10 @@ impl Index {
         let avg_len = self.doc_len.values().copied().sum::<usize>() as f32 / self.n_docs as f32;
         
         // スコア計算のために各ドキュメントごとにマッチの種類を記録
-        let mut match_types: FxHashMap<String, (bool, bool, bool, bool)> = FxHashMap::default();
+        let mut match_types: HashMap<String, (bool, bool, bool, bool)> = HashMap::default();
         
         // BM25スコア計算のベースとなる通常のスコア
-        let mut scores: FxHashMap<String, f32> = FxHashMap::default();
+        let mut scores: HashMap<String, f32> = HashMap::default();
         
         // 完全一致と部分一致を検出
         for term in terms {
@@ -329,7 +330,7 @@ impl Index {
         self.doc_len.insert(name.to_string(), aliases.len() + 1); // +1 for name
         self.n_docs += 1;
         
-        let mut seen = FxHashSet::default();
+        let mut seen = HashSet::default();
         // 名前自体もインデックスに追加
         seen.insert(name.to_string());
         self.postings.entry(name.to_string()).or_default().push(name.to_string());
