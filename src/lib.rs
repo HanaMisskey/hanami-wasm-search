@@ -302,8 +302,12 @@ impl Index {
     }
 
     fn remove_doc(&mut self, doc_id: String) {
-        for list in self.postings.values_mut() { list.retain(|id| *id != doc_id); }
-        self.doc_len.remove(&doc_id); self.n_docs -= 1;
+        self.postings.retain(|_, posting_list| {
+            posting_list.retain(|id| id != &doc_id);
+            !posting_list.is_empty()
+        });
+        self.doc_len.remove(&doc_id);
+        self.n_docs = self.n_docs.saturating_sub(1);
     }
 
     #[wasm_bindgen(js_name = "removeDocument")]
