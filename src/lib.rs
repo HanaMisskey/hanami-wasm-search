@@ -365,8 +365,16 @@ impl Index {
             return Ok(false);
         }
         
-        // 古いドキュメントを削除して、新しいドキュメントを追加
+        // Parse the new aliases to make sure they're valid before proceeding
+        match serde_json::from_str::<Vec<String>>(aliases_json) {
+            Ok(_) => (), // Just checking validity
+            Err(e) => return Err(JsValue::from_str(&e.to_string())),
+        };
+        
+        // Remove the document completely
         self.remove_doc(doc_id.to_string());
+        
+        // Add it back with the new aliases
         self.add_document(doc_id, aliases_json)?;
         
         Ok(true)
