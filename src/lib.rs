@@ -133,8 +133,8 @@ impl Index {
         Ok(())
     }
 
-    #[wasm_bindgen(js_name = "searchWithMode")]
-    pub fn search_with_mode(&self, query_json: &str, _mode: &str, limit: Option<usize>) -> Result<JsValue, JsValue> {
+    #[wasm_bindgen(js_name = "search")]
+    pub fn search(&self, query_json: &str, limit: Option<usize>) -> Result<JsValue, JsValue> {
         let original: Vec<String> = serde_json::from_str(query_json)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
         
@@ -279,16 +279,16 @@ impl Index {
         Ok(serde_wasm_bindgen::to_value(&ranked).unwrap())
     }
 
-    #[wasm_bindgen(js_name = "searchWithModeNoLimit")]
-    pub fn search_with_mode_no_limit(&self, query_json: &str, mode: &str) -> Result<JsValue, JsValue> {
+    #[wasm_bindgen(js_name = "searchNoLimit")]
+    pub fn search_no_limit(&self, query_json: &str) -> Result<JsValue, JsValue> {
         // 元の関数をラップし、制限なし（None）で呼び出す
-        self.search_with_mode(query_json, mode, None)
+        self.search(query_json, None)
     }
 
     #[wasm_bindgen(js_name = "searchWithLimit")]
-    pub fn search_with_limit(&self, query_json: &str, mode: &str, limit: usize) -> Result<JsValue, JsValue> {
+    pub fn search_with_limit(&self, query_json: &str, limit: usize) -> Result<JsValue, JsValue> {
         // 明示的に制限数を指定して検索
-        self.search_with_mode(query_json, mode, Some(limit))
+        self.search(query_json, Some(limit))
     }
 
     pub fn dump(&self) -> Result<js_sys::Uint8Array, JsValue> {

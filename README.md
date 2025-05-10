@@ -54,7 +54,7 @@ async function main() {
     index.add_documents(JSON.stringify(data));
     
     // 検索を実行
-    const results = index.searchWithMode(JSON.stringify(["にこ"]), "OR", 10);
+    const results = index.search(JSON.stringify(["にこ"]), 10);
     console.log("検索結果:", results);
     
   } catch (e) {
@@ -85,8 +85,16 @@ index.add_documents(JSON.stringify(emojisData));
 
 ```js
 // 検索クエリを実行（結果の数を制限）
-const results = index.searchWithLimit(JSON.stringify(["にこ"]), "default", 10);
+const results = index.search(JSON.stringify(["にこ"]), 10);
 console.log(results); // ["smile", ...]
+
+// 制限なしで検索
+const allResults = index.searchNoLimit(JSON.stringify(["にこ"]));
+console.log(allResults);
+
+// 明示的に制限を指定して検索
+const limitedResults = index.searchWithLimit(JSON.stringify(["にこ"]), 5);
+console.log(limitedResults);
 ```
 
 ### インデックスの保存と読み込み
@@ -118,20 +126,24 @@ JSON 文字列としてドキュメントを追加します。
 
 - `jsonStr`: `{ "emojis": [{ "name": string, "aliases": string[] }] }` 形式の JSON 文字列
 
-### `index.searchWithMode(queryJsonStr, mode, [limit])`
+### `index.search(queryJsonStr, [limit])`
 
 検索クエリを実行します。
 
 - `queryJsonStr`: 検索キーワードの文字列配列の JSON 文字列
-- `mode`: 検索モード ("OR", "AND", etc.)
 - `limit` (省略可能): 返す結果の最大数 (デフォルト: 20)
 
-### `index.searchWithLimit(queryJsonStr, mode, limit)`
+### `index.searchNoLimit(queryJsonStr)`
+
+検索クエリを実行し、結果数の制限なしで返します。
+
+- `queryJsonStr`: 検索キーワードの文字列配列の JSON 文字列
+
+### `index.searchWithLimit(queryJsonStr, limit)`
 
 検索クエリを実行し、結果数を制限します。
 
 - `queryJsonStr`: 検索キーワードの文字列配列の JSON 文字列
-- `mode`: 検索モード
 - `limit`: 返す結果の最大数
 
 ### `index.dump()`
@@ -200,7 +212,7 @@ JSON 文字列としてドキュメントを追加します。
         
         document.getElementById('searchButton').addEventListener('click', () => {
           const query = searchInput.value;
-          const results = index.searchWithMode(JSON.stringify([query]), "OR", 10);
+          const results = index.search(JSON.stringify([query]), 10);
           
           resultsDiv.innerHTML = '';
           results.forEach(result => {
