@@ -1,0 +1,30 @@
+{
+  "name": "hanami_wasm_search",
+  "type": "module",
+  "description": "Lightweight search engine using WebAssembly for Japanese emoji search",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/HanaMisskey/hanami-wasm-search"
+  },
+  "files": [
+    "hanami_wasm_search_bg.wasm",
+    "hanami_wasm_search.js",
+    "hanami_wasm_search_bg.js",
+    "hanami_wasm_search.d.ts"
+  ],
+  "main": "hanami_wasm_search.js",
+  "types": "hanami_wasm_search.d.ts",
+  "sideEffects": [
+    "./hanami_wasm_search.js",
+    "./snippets/*"
+  ],
+  "keywords": [
+    "search",
+    "wasm",
+    "japanese",
+    "emoji"
+  ],
+  "author": "HanaMisskey"
+}
