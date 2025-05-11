@@ -13,8 +13,8 @@
             "require": "./dist/index.cjs"
         },
         "./engine.wasm": {
-            "default": "./dist/engine.wasm",
-            "types": "./dist/engine.d.ts"
+            "types": "./dist/engine.d.ts",
+            "default": "./dist/engine.wasm"
         }
     },
     "files": [
