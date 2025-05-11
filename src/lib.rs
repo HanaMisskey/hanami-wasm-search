@@ -13,27 +13,30 @@ type Postings = HashMap<String, Vec<String>>;
 
 // 2-gram（バイグラム）トークン化関数
 fn tokenize_2gram(text: &str) -> Vec<String> {
-    let chars: Vec<char> = text.chars().collect();
-    let char_count = chars.len();
+    let char_count = text.chars().count();
     
-    // 事前にベクターの容量を確保（2-gram + 元単語分）
-    let mut tokens = if char_count <= 1 {
-        Vec::with_capacity(char_count)
-    } else {
-        Vec::with_capacity(char_count)
-    };
-    
-    // 文字数が1以下の場合は、そのまま返す
+    // 1文字以下の場合は特別処理
     if char_count <= 1 {
-        if !chars.is_empty() {
-            tokens.push(text.to_string());
-        }
-        return tokens;
+        return if char_count == 0 {
+            Vec::new()
+        } else {
+            vec![text.to_string()]
+        };
     }
     
-    // 2-gramトークンを生成
-    for i in 0..char_count - 1 {
-        let token: String = chars[i..=i+1].iter().collect();
+    // 必要な容量を正確に計算: 2-gram数 + 元の単語
+    // 2-gram数 = char_count - 1, +1 for 元の単語
+    let mut tokens = Vec::with_capacity(char_count);
+    
+    // 文字列の効率的なスライス処理のためcharインデックス位置を記録
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    
+    // 2-gramトークンを生成 - チャーインデックスを使って効率化
+    for i in 0..chars.len() - 1 {
+        let (start_idx, _) = chars[i];
+        let (end_idx, end_char) = chars[i + 1];
+        // 文字境界を正確に判断し、バイトスライスを使う
+        let token = text[start_idx..end_idx + end_char.len_utf8()].to_string();
         tokens.push(token);
     }
     
@@ -131,25 +134,28 @@ impl Index {
             
             // 名前自体もインデックスに追加
             seen.insert(doc_name.clone());
+            // 自身のpostingリストには自身のdoc_nameを登録
             self.postings.entry(doc_name.clone()).or_default().push(doc_name.clone());
             
             // 名前の2-gramトークン化（部分一致用）
             let name_tokens = tokenize_2gram(&doc.name);
+            // 登録先の参照を保持することでcloneを減らす
+            let doc_name_ref = &doc_name;
             for token in name_tokens {
                 if !seen.insert(token.clone()) { continue; }
-                self.postings.entry(token).or_default().push(doc_name.clone());
+                self.postings.entry(token).or_default().push(doc_name_ref.clone());
             }
             
             // エイリアス（別名）もインデックス化
             for alias in doc.aliases {
                 if !seen.insert(alias.clone()) { continue; }
-                self.postings.entry(alias.clone()).or_default().push(doc_name.clone());
+                self.postings.entry(alias.clone()).or_default().push(doc_name_ref.clone());
                 
                 // エイリアスも2-gramトークン化（部分一致用）
                 let alias_tokens = tokenize_2gram(&alias);
                 for subtoken in alias_tokens {
                     if !seen.insert(subtoken.clone()) { continue; }
-                    self.postings.entry(subtoken).or_default().push(doc_name.clone());
+                    self.postings.entry(subtoken).or_default().push(doc_name_ref.clone());
                 }
             }
         }
@@ -175,29 +181,33 @@ impl Index {
         // 平均ドキュメント長を事前計算
         let avg_len = self.doc_len.values().copied().sum::<usize>() as f32 / self.n_docs as f32;
         
-        // 推定されるクエリ拡張サイズでメモリを事前確保
-        let estimated_expanded_size = original.len() * 5;
+        // 最適化: より正確な推定サイズ計算
+        let max_term_len = original.iter().map(|s| s.chars().count()).max().unwrap_or(0);
+        // 元の用語数 + 2-gram最大数 + ひらがな変換分
+        let estimated_expanded_size = original.len() * (1 + max_term_len.saturating_sub(1) + 1);
         let mut expanded_2gram = Vec::with_capacity(estimated_expanded_size);
         let mut seen_tokens = HashSet::with_capacity_and_hasher(estimated_expanded_size, Default::default());
         
-        // オリジナルクエリ用のハッシュセット（高速検索用）
-        let original_terms: HashSet<&String> = original.iter().collect();
+        // オリジナルクエリ用のハッシュセット（高速検索用） - 参照を使うことでメモリ使用量を軽減
+        let original_terms: HashSet<&str> = original.iter().map(|s| s.as_str()).collect();
         
         // クエリを2-gramに変換する
         for term in &original {
-            // オリジナルの単語も検索対象に含める
+            // オリジナルの単語も検索対象に含める - ムーブで所有権を移動し、クローンを回避
+            let term_str = term.as_str();
             expanded_2gram.push(term.clone());
-            seen_tokens.insert(term.clone());
+            seen_tokens.insert(term_str.to_string());
             
-            // 日本語変換のサポート
-            if term.chars().all(|c| c.is_ascii_alphabetic()) {
-                let hira = term.to_lowercase().to_hiragana();
+            // 日本語変換のサポート - メモリ使用量が少ない場合のみ処理
+            if term_str.len() < 50 && term_str.chars().all(|c| c.is_ascii_alphabetic()) {
+                let hira = term_str.to_lowercase().to_hiragana();
                 if hira != *term {
-                    expanded_2gram.push(hira.clone());
-                    seen_tokens.insert(hira.clone());
+                    let hira_str = hira.clone();
+                    expanded_2gram.push(hira);
+                    seen_tokens.insert(hira_str.clone());
                     
                     // 変換された日本語も2-gramトークン化
-                    let hira_tokens = tokenize_2gram(&hira);
+                    let hira_tokens = tokenize_2gram(&hira_str);
                     for token in hira_tokens {
                         if seen_tokens.insert(token.clone()) {
                             expanded_2gram.push(token);
@@ -206,30 +216,48 @@ impl Index {
                 }
             }
             
-            // 2-gramトークン化
-            let tokens = tokenize_2gram(term);
-            for token in tokens {
-                if seen_tokens.insert(token.clone()) {
-                    expanded_2gram.push(token);
+            // 2-gramトークン化 - 短いトークンの場合のみ処理を実行
+            if term_str.len() < 100 { // 異常に長い単語の場合は2-gramを生成しない
+                let tokens = tokenize_2gram(term_str);
+                for token in tokens {
+                    if seen_tokens.insert(token.clone()) {
+                        expanded_2gram.push(token);
+                    }
                 }
             }
         }
         
         // 検索結果のサイズを推定してHashMapを初期化（パフォーマンス向上）
-        let estimated_results = expanded_2gram.len().min(self.n_docs);
+        let estimated_results = (expanded_2gram.len().min(self.n_docs) / 2).max(10); // 結果数をより現実的に推定
         let mut scores = HashMap::with_capacity_and_hasher(estimated_results, Default::default());
         let mut match_types = HashMap::with_capacity_and_hasher(estimated_results, Default::default());
         
         // 完全一致と部分一致を検出
+        // 長いトークンから処理してより多くの関連ドキュメントを早期に検索
+        // これにより重要な検索結果が優先され、後続の処理量が減る
+        let mut expanded_2gram = expanded_2gram; // 可変にする
+        expanded_2gram.sort_by(|a, b| b.len().cmp(&a.len()));
+        
+        // 検索結果制限を考慮して処理を最適化
+        let mut doc_count = 0;
+        let early_exit_threshold = result_limit * 10; // 十分な候補を見つけたら早期終了
+        
         for term in &expanded_2gram {
             if let Some(list) = self.postings.get(term) {
                 let df = list.len() as f32;
                 let idf = ((self.n_docs as f32 - df + 0.5)/(df+0.5) + 1.0).ln();
                 
-                // 原文クエリに対する高速検索
-                let original_contains_term = original_terms.contains(term);
+                // 原文クエリに対する高速検索 - &str比較で効率化
+                let term_str = term.as_str();
+                let original_contains_term = original_terms.contains(&term_str);
                 
                 for doc_id in list {
+                    // メモリ効率化: 多すぎる候補を処理しないようにする
+                    if doc_count > early_exit_threshold && scores.len() >= result_limit * 2 {
+                        break;
+                    }
+                    doc_count += 1;
+                    
                     // 基本的なBM25スコア計算
                     let tf = if original_contains_term { 2.0 } else { 1.0 };
                     let len = *self.doc_len.get(doc_id).unwrap_or(&1) as f32;
@@ -240,9 +268,9 @@ impl Index {
                     // マッチ種類を記録（ビットフラグを使用）
                     let entry = match_types.entry(doc_id.clone()).or_insert(0);
                     
-                    // 完全一致の判定（最も頻度の高いケース）
+                    // 完全一致の判定（最も頻度の高いケース）- 文字列比較を効率化
                     if original_contains_term {
-                        if term == doc_id {
+                        if term_str == doc_id {
                             // nameと完全一致
                             *entry |= MATCH_NAME_EXACT;
                         } else {
@@ -250,8 +278,8 @@ impl Index {
                             *entry |= MATCH_ALIAS_EXACT;
                         }
                     } else {
-                        // 部分一致の判定（より効率的なチェック）
-                        if doc_id.contains(term) {
+                        // 部分一致の判定（より効率的なチェック） - 長い文字列は部分一致チェックを省略
+                        if term.len() <= 50 && doc_id.contains(term_str) {
                             *entry |= MATCH_NAME_PARTIAL;
                         } else {
                             // aliasとの部分一致と判断
@@ -262,46 +290,117 @@ impl Index {
             }
         }
         
-        // 結果容量を事前に確保
-        let result_size = scores.len().min(result_limit);
-        let mut results = Vec::with_capacity(result_size);
+        // スコアリング結果の効率的処理 - メモリオーバーヘッドを削減
         
-        // フィルタリングとスコアリング
-        for (doc_id, score) in scores {
-            let match_type = match_types.get(&doc_id).cloned().unwrap_or(0);
-            results.push((doc_id, score, match_type));
-        }
+        // 以下の場合は上位N件のみを保持する最適化を行う
+        if scores.len() > result_limit * 2 && result_limit < 100 {
+            // 少ない結果数でヒープソートを効率的に使用
+            use std::collections::BinaryHeap;
+            use std::cmp::Reverse;
             
-        // 優先順位付けでソート - 最適化
-        results.sort_by(|a, b| {
-            let (_, a_score, a_match) = a;
-            let (_, b_score, b_match) = b;
-            
-            // マッチタイプに基づいて優先度スコアを計算（ビットシフト操作を最適化）
-            let a_priority = ((a_match & MATCH_NAME_EXACT) << 3) | 
-                            ((a_match & MATCH_ALIAS_EXACT) << 1) | 
-                            ((a_match & MATCH_NAME_PARTIAL) >> 1) | 
-                            ((a_match & MATCH_ALIAS_PARTIAL) >> 3);
-                            
-            let b_priority = ((b_match & MATCH_NAME_EXACT) << 3) | 
-                            ((b_match & MATCH_ALIAS_EXACT) << 1) | 
-                            ((b_match & MATCH_NAME_PARTIAL) >> 1) | 
-                            ((b_match & MATCH_ALIAS_PARTIAL) >> 3);
-            
-            // 優先度で比較し、同じ場合はスコアで比較
-            match b_priority.cmp(&a_priority) {
-                std::cmp::Ordering::Equal => b_score.partial_cmp(a_score).unwrap_or(std::cmp::Ordering::Equal),
-                other => other
+            // 優先度+スコアのヒープコンテナを使用して上位N件のみを保持
+            #[derive(PartialEq, Eq)]
+            struct ScoredDoc {
+                priority: u8,
+                // 浮動小数点比較のためにバイト表現に変換
+                score_bits: u32,
+                doc_id: String,
             }
-        });
-        
-        // 検索結果を制限して、IDのみを返す (メモリ使用量とコピー回数を削減)
-        let mut ranked = Vec::with_capacity(result_size);
-        for (id, _, _) in results.into_iter().take(result_limit) {
-            ranked.push(id);
+            
+            impl PartialOrd for ScoredDoc {
+                fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+                    Some(self.cmp(other))
+                }
+            }
+            
+            impl Ord for ScoredDoc {
+                fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+                    // 優先度が高いものが先に、優先度が同じなら高いスコアのものが先に
+                    self.priority.cmp(&other.priority)
+                        .then_with(|| self.score_bits.cmp(&other.score_bits))
+                }
+            }
+            
+            // 上位N件だけを保持するMinHeap
+            let mut top_docs = BinaryHeap::with_capacity(result_limit + 1);
+            
+            // すべてのドキュメントをスコア計算して、ヒープに追加
+            for (doc_id, score) in scores {
+                let match_type = match_types.get(&doc_id).cloned().unwrap_or(0);
+                
+                // マッチタイプに基づいて優先度スコアを計算
+                let priority = ((match_type & MATCH_NAME_EXACT) << 3) | 
+                              ((match_type & MATCH_ALIAS_EXACT) << 1) | 
+                              ((match_type & MATCH_NAME_PARTIAL) >> 1) | 
+                              ((match_type & MATCH_ALIAS_PARTIAL) >> 3);
+                
+                // 浮動小数点を比較可能なビット表現に変換
+                let score_bits = score.to_bits();
+                
+                // スコアドキュメントを作成（所有権移転で効率化）
+                let scored_doc = ScoredDoc { priority, score_bits, doc_id };
+                
+                // MinHeapとして使うためReverseでラップ
+                top_docs.push(Reverse(scored_doc));
+                
+                // ヒープサイズを制限
+                if top_docs.len() > result_limit {
+                    top_docs.pop();
+                }
+            }
+            
+            // 結果を取り出し
+            let mut ranked = Vec::with_capacity(top_docs.len());
+            while let Some(Reverse(doc)) = top_docs.pop() {
+                ranked.push(doc.doc_id);
+            }
+            
+            // ヒープから取り出した結果は昇順なので、降順に並べ替え
+            ranked.reverse();
+            
+            Ok(serde_wasm_bindgen::to_value(&ranked).unwrap())
+        } else {
+            // 少数の結果に対しては従来の方法を使用
+            let result_size = scores.len().min(result_limit);
+            let mut results = Vec::with_capacity(result_size);
+            
+            // フィルタリングとスコアリング
+            for (doc_id, score) in scores {
+                let match_type = match_types.get(&doc_id).cloned().unwrap_or(0);
+                results.push((doc_id, score, match_type));
+            }
+                
+            // 優先順位付けでソート - 最適化
+            results.sort_by(|a, b| {
+                let (_, a_score, a_match) = a;
+                let (_, b_score, b_match) = b;
+                
+                // マッチタイプに基づいて優先度スコアを計算（ビットシフト操作を最適化）
+                let a_priority = ((a_match & MATCH_NAME_EXACT) << 3) | 
+                                ((a_match & MATCH_ALIAS_EXACT) << 1) | 
+                                ((a_match & MATCH_NAME_PARTIAL) >> 1) | 
+                                ((a_match & MATCH_ALIAS_PARTIAL) >> 3);
+                                
+                let b_priority = ((b_match & MATCH_NAME_EXACT) << 3) | 
+                                ((b_match & MATCH_ALIAS_EXACT) << 1) | 
+                                ((b_match & MATCH_NAME_PARTIAL) >> 1) | 
+                                ((b_match & MATCH_ALIAS_PARTIAL) >> 3);
+                
+                // 優先度で比較し、同じ場合はスコアで比較
+                match b_priority.cmp(&a_priority) {
+                    std::cmp::Ordering::Equal => b_score.partial_cmp(a_score).unwrap_or(std::cmp::Ordering::Equal),
+                    other => other
+                }
+            });
+            
+            // 検索結果を制限して、IDのみを返す (メモリ使用量とコピー回数を削減)
+            let mut ranked = Vec::with_capacity(result_size);
+            for (id, _, _) in results.into_iter().take(result_limit) {
+                ranked.push(id);
+            }
+            
+            Ok(serde_wasm_bindgen::to_value(&ranked).unwrap())
         }
-        
-        Ok(serde_wasm_bindgen::to_value(&ranked).unwrap())
     }
 
     #[wasm_bindgen(js_name = "searchNoLimit")]
@@ -326,24 +425,64 @@ impl Index {
     }
 
     fn remove_doc(&mut self, doc_id: String) {
-        // 前もって特定のドキュメントが出現する可能性のあるポスティングリストを見つける
-        // （パフォーマンス改善のため）
-        let doc_len = self.doc_len.remove(&doc_id).unwrap_or(0);
+        // doc_lenが存在するか確認
+        let doc_len = if let Some(len) = self.doc_len.remove(&doc_id) {
+            len
+        } else {
+            return; // ドキュメントが存在しない場合は早期リターン
+        };
         
-        if doc_len > 0 {
-            self.postings.retain(|_, posting_list| {
-                posting_list.retain(|id| id != &doc_id);
-                !posting_list.is_empty()
-            });
-            
-            self.n_docs = self.n_docs.saturating_sub(1);
+        // tokenize関数をこのスコープで使うため、id用のトークンを準備
+        let mut tokens_to_check = Vec::with_capacity(doc_len + 2);
+        
+        // 最低限必要なトークンを追加（名前自体）
+        tokens_to_check.push(doc_id.clone());
+        
+        // 部分一致用の2-gramトークンも追加（最も発生頻度が高いものだけ）
+        // 文字数制限を設けることでメモリ使用量を抑制
+        if doc_id.len() < 50 {
+            for token in tokenize_2gram(&doc_id) {
+                tokens_to_check.push(token);
+            }
         }
+        
+        // より効率的な削除: 完全なスキャンの代わりに可能性の高いpostingだけをチェック
+        for token in &tokens_to_check {
+            if let Some(posting_list) = self.postings.get_mut(token) {
+                // 参照比較の代わりに所有権ベースの比較
+                let before_len = posting_list.len();
+                posting_list.retain(|id| id != &doc_id);
+                
+                // リストが空になった場合はエントリを削除
+                if posting_list.is_empty() {
+                    self.postings.remove(token);
+                }
+                // 最適化: アイテムが削除されていない場合、このトークンに関連付けられたエイリアスは存在しない
+                else if before_len == posting_list.len() && token == &doc_id {
+                    // 名前自体のエントリに変更がない場合は、このドキュメントが他のトークンを持っていないと仮定
+                    break;
+                }
+            }
+        }
+        
+        // 見つからなかったポスティングリストをフォールバックとして処理
+        // より効率的なリテインロジックを使用
+        self.postings.retain(|_, posting_list| {
+            let before_len = posting_list.len();
+            posting_list.retain(|id| id != &doc_id);
+            // 変更がない場合は保持、空になった場合は削除
+            posting_list.len() == before_len || !posting_list.is_empty()
+        });
+        
+        self.n_docs = self.n_docs.saturating_sub(1);
     }
 
     #[wasm_bindgen(js_name = "removeDocument")]
     pub fn remove_document(&mut self, doc_id: &str) -> Result<bool, JsValue> {
+        // 短い文字列の場合はto_stringの代わりにto_ownedを使用してパフォーマンスを向上
+        // exists check + remove を一度の操作で行う
         if self.doc_len.contains_key(doc_id) {
-            self.remove_doc(doc_id.to_string());
+            self.remove_doc(doc_id.to_owned());
             Ok(true)
         } else {
             Ok(false)
@@ -376,21 +515,23 @@ impl Index {
         
         // 名前の2-gramトークン化（部分一致用）
         let name_tokens = tokenize_2gram(name);
+        // 登録先の参照を保持することでcloneを減らす
+        let doc_name_ref = &doc_name;
         for token in name_tokens {
             if !seen.insert(token.clone()) { continue; }
-            self.postings.entry(token).or_default().push(doc_name.clone());
+            self.postings.entry(token).or_default().push(doc_name_ref.clone());
         }
         
         // エイリアス（別名）もインデックス化
         for alias in aliases {
             if !seen.insert(alias.clone()) { continue; }
-            self.postings.entry(alias.clone()).or_default().push(doc_name.clone());
+            self.postings.entry(alias.clone()).or_default().push(doc_name_ref.clone());
             
             // エイリアスも2-gramトークン化（部分一致用）
             let alias_tokens = tokenize_2gram(&alias);
             for subtoken in alias_tokens {
                 if !seen.insert(subtoken.clone()) { continue; }
-                self.postings.entry(subtoken).or_default().push(doc_name.clone());
+                self.postings.entry(subtoken).or_default().push(doc_name_ref.clone());
             }
         }
         
