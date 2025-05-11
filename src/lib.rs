@@ -3,6 +3,12 @@ use serde::{Serialize, Deserialize};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use wana_kana::ConvertJapanese;
 
+// マッチタイプのフラグを定義（ビットフラグ）
+const MATCH_NAME_EXACT: u8 = 0b1000; // nameと完全一致
+const MATCH_ALIAS_EXACT: u8 = 0b0100; // aliasと完全一致
+const MATCH_NAME_PARTIAL: u8 = 0b0010; // nameと部分一致
+const MATCH_ALIAS_PARTIAL: u8 = 0b0001; // aliasと部分一致
+
 type Postings = HashMap<String, Vec<String>>;
 
 // 2-gram（バイグラム）トークン化関数
@@ -136,27 +142,36 @@ impl Index {
 
     #[wasm_bindgen(js_name = "search")]
     pub fn search(&self, query_json: &str, limit: Option<usize>) -> Result<JsValue, JsValue> {
-        let original: Vec<String> = serde_json::from_str(query_json)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        // JSONデシリアライズの最適化（少し効率的な方法）
+        let original: Vec<String> = match serde_json::from_str(query_json) {
+            Ok(data) => data,
+            Err(e) => return Err(JsValue::from_str(&e.to_string())),
+        };
         
         // デフォルトの検索結果制限を20に設定
         let result_limit = limit.unwrap_or(20);
         
         // クエリを2-gramに変換する
+        // クエリトークンの重複チェックに HashSet を使用して効率化
         let mut expanded_2gram: Vec<String> = Vec::new();
+        let mut seen_tokens = HashSet::default();
+        
         for term in &original {
             // オリジナルの単語も検索対象に含める
             expanded_2gram.push(term.clone());
+            seen_tokens.insert(term.clone());
             
             // 日本語変換のサポート
             if term.chars().all(|c| c.is_ascii_alphabetic()) {
                 let hira = term.to_lowercase().to_hiragana();
                 if hira != *term {
                     expanded_2gram.push(hira.clone());
+                    seen_tokens.insert(hira.clone());
+                    
                     // 変換された日本語も2-gramトークン化
                     let hira_tokens = tokenize_2gram(&hira);
                     for token in hira_tokens {
-                        if !expanded_2gram.contains(&token) {
+                        if seen_tokens.insert(token.clone()) {
                             expanded_2gram.push(token);
                         }
                     }
@@ -166,7 +181,7 @@ impl Index {
             // 2-gramトークン化
             let tokens = tokenize_2gram(term);
             for token in tokens {
-                if !expanded_2gram.contains(&token) {
+                if seen_tokens.insert(token.clone()) {
                     expanded_2gram.push(token);
                 }
             }
@@ -179,8 +194,8 @@ impl Index {
         }
         let avg_len = self.doc_len.values().copied().sum::<usize>() as f32 / self.n_docs as f32;
         
-        // スコア計算のために各ドキュメントごとにマッチの種類を記録
-        let mut match_types: HashMap<String, (bool, bool, bool, bool)> = HashMap::default();
+        // スコア計算のために各ドキュメントごとにマッチの種類を記録（ビットフラグ）
+        let mut match_types: HashMap<String, u8> = HashMap::default();
         
         // BM25スコア計算のベースとなる通常のスコア
         let mut scores: HashMap<String, f32> = HashMap::default();
@@ -191,92 +206,87 @@ impl Index {
                 let df = list.len() as f32;
                 let idf = ((self.n_docs as f32 - df + 0.5)/(df+0.5) + 1.0).ln();
                 
+                // 原文クエリに対するHashSet保持（高速検索）
+                let original_contains_term = original.iter().any(|s| s == term);
+                
                 for doc_id in list {
                     // 基本的なBM25スコア計算
-                    let tf = if original.contains(term) { 2.0 } else { 1.0 };
+                    let tf = if original_contains_term { 2.0 } else { 1.0 };
                     let len = *self.doc_len.get(doc_id).unwrap_or(&1) as f32;
                     let score = idf * (tf*(self.k1+1.0)) /
                         (tf + self.k1*(1.0 - self.b + self.b*len/avg_len));
                     *scores.entry(doc_id.clone()).or_insert(0.0) += score;
                     
-                    // マッチ種類を記録 (name完全一致, alias完全一致, name部分一致, alias部分一致)
-                    let entry = match_types.entry(doc_id.clone()).or_insert((false, false, false, false));
+                    // マッチ種類を記録（ビットフラグを使用）
+                    let entry = match_types.entry(doc_id.clone()).or_insert(0);
                     
                     // 完全一致の判定
-                    if original.contains(term) {
+                    if original_contains_term {
                         if term == doc_id {
                             // nameと完全一致
-                            entry.0 = true;
+                            *entry |= MATCH_NAME_EXACT;
                         } else {
                             // aliasとの完全一致チェック
-                            entry.1 = true;
+                            *entry |= MATCH_ALIAS_EXACT;
                         }
                     } else {
                         // 部分一致の判定 (name)
-                        if tokenize_2gram(doc_id).contains(term) {
-                            entry.2 = true;
+                        // ドキュメントIDのトークン化を毎回行わずにチェックする方法
+                        let first_char_matches = term.chars().next().map_or(false, |t| 
+                            doc_id.contains(t));
+                            
+                        if first_char_matches && tokenize_2gram(doc_id).iter().any(|t| t == term) {
+                            *entry |= MATCH_NAME_PARTIAL;
                         } else {
                             // aliasとの部分一致と判断
-                            entry.3 = true;
+                            *entry |= MATCH_ALIAS_PARTIAL;
                         }
                     }
                 }
             }
         }
         // フィルタリングとスコアリング
-        let mut results: Vec<(String, f32, (bool, bool, bool, bool))> = scores.into_iter()
+        let mut results: Vec<(String, f32, u8)> = scores.into_iter()
             .map(|(doc_id, score)| {
-                let match_type = match_types.get(&doc_id).cloned().unwrap_or((false, false, false, false));
+                let match_type = match_types.get(&doc_id).cloned().unwrap_or(0);
                 (doc_id, score, match_type)
             })
             .collect();
             
-        // 優先順位付けでソート
+        // 優先順位付けでソート - より効率的な実装
         // 1. nameに対する完全一致
         // 2. aliasに対する完全一致
         // 3. nameに対する部分一致
         // 4. aliasに対する部分一致
         results.sort_by(|a, b| {
-            let (_, _, a_match) = a;
-            let (_, _, b_match) = b;
+            let (_, a_score, a_match) = a;
+            let (_, b_score, b_match) = b;
             
-            // nameと完全一致
-            match (a_match.0, b_match.0) {
-                (true, false) => return std::cmp::Ordering::Less,
-                (false, true) => return std::cmp::Ordering::Greater,
-                _ => {}
+            // マッチタイプに基づいて優先度スコアを計算
+            // 優先度の高い順に値を大きくする
+            let a_priority = ((a_match & MATCH_NAME_EXACT) << 3) | 
+                            ((a_match & MATCH_ALIAS_EXACT) << 1) | 
+                            ((a_match & MATCH_NAME_PARTIAL) >> 1) | 
+                            ((a_match & MATCH_ALIAS_PARTIAL) >> 3);
+                            
+            let b_priority = ((b_match & MATCH_NAME_EXACT) << 3) | 
+                            ((b_match & MATCH_ALIAS_EXACT) << 1) | 
+                            ((b_match & MATCH_NAME_PARTIAL) >> 1) | 
+                            ((b_match & MATCH_ALIAS_PARTIAL) >> 3);
+            
+            // 優先度で比較し、同じ場合はスコアで比較
+            match b_priority.cmp(&a_priority) {
+                std::cmp::Ordering::Equal => b_score.partial_cmp(a_score).unwrap_or(std::cmp::Ordering::Equal),
+                other => other
             }
-            
-            // aliasと完全一致
-            match (a_match.1, b_match.1) {
-                (true, false) => return std::cmp::Ordering::Less,
-                (false, true) => return std::cmp::Ordering::Greater,
-                _ => {}
-            }
-            
-            // nameと部分一致
-            match (a_match.2, b_match.2) {
-                (true, false) => return std::cmp::Ordering::Less,
-                (false, true) => return std::cmp::Ordering::Greater,
-                _ => {}
-            }
-            
-            // aliasと部分一致
-            match (a_match.3, b_match.3) {
-                (true, false) => return std::cmp::Ordering::Less,
-                (false, true) => return std::cmp::Ordering::Greater,
-                _ => {}
-            }
-            
-            // 同じ優先度の場合はBM25スコアで比較
-            b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
         });
         
-        // 検索結果を制限して、IDのみを返す
-        let ranked: Vec<String> = results.into_iter()
-            .take(result_limit) // 検索結果を指定された数に制限する
-            .map(|(id, _, _)| id)
-            .collect();
+        // 検索結果を制限して、IDのみを返す (メモリ使用量とコピー回数を削減)
+        let mut ranked = Vec::with_capacity(result_limit.min(results.len()));
+        for (id, _, _) in results.into_iter().take(result_limit) {
+            ranked.push(id);
+        }
+        
         Ok(serde_wasm_bindgen::to_value(&ranked).unwrap())
     }
 
