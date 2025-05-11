@@ -130,14 +130,14 @@ function runTests() {
       assertEqual(results[0], 'にやけ', 'Result should be test1');
       
       // ドキュメント更新
-      index.updateDocument('にやけ', JSON.stringify(['ニチャ', 'ケアレスミス']));
+      index.updateDocument('にやけ', JSON.stringify(['ニチャｱ…', 'ケアレスミス']));
       
       const oldResults = index.searchWithLimit(queryJson, 10);
       console.log('Search results with old alias after update:', oldResults);
       assertEqual(oldResults.length, 0, 'Should not find document with old alias');
       
       // 新しいエイリアスで見つかる
-      const newQuery = JSON.stringify(['ニチャ']);
+      const newQuery = JSON.stringify(['ニチャｱ…']);
       const newResults = index.searchWithLimit(newQuery, 10);
       assertEqual(newResults.length, 1, 'Should find document with new alias');
       assertEqual(newResults[0], 'にやけ', 'Result should be test1');
@@ -148,6 +148,36 @@ function runTests() {
       // 削除後検索
       const afterDeleteResults = index.searchWithLimit(newQuery, 10);
       assertEqual(afterDeleteResults.length, 0, 'Should not find document after delete');
+    }
+
+    // テスト8: 1文字のnameとaliasの検索
+    console.log('\n--- Test: Single Character Search ---');
+    {
+      const index = new wasm.Index();
+      
+      // 1文字のドキュメント名を追加
+      index.addDocument('絵', JSON.stringify(['イラスト', '画']));
+      
+      // 1文字のaliasを持つドキュメントを追加
+      index.addDocument('猫', JSON.stringify(['ねこ', '🐱', '猫科']));
+      
+      // 1文字のドキュメント名で検索
+      const nameQuery = JSON.stringify(['絵']);
+      const nameResults = index.searchWithLimit(nameQuery, 10);
+      assertEqual(nameResults.length, 1, 'Should find document with single character name');
+      assertEqual(nameResults[0], '絵', 'Result should be 絵');
+      
+      // 1文字のaliasで検索
+      const aliasQuery = JSON.stringify(['🐱']);
+      const aliasResults = index.searchWithLimit(aliasQuery, 10);
+      assertEqual(aliasResults.length, 1, 'Should find document with single character alias');
+      assertEqual(aliasResults[0], '猫', 'Result should be 猫');
+      
+      // 1文字の部分一致で検索
+      const partialQuery = JSON.stringify(['画']);
+      const partialResults = index.searchWithLimit(partialQuery, 10);
+      assertEqual(partialResults.length, 1, 'Should find document with single character partial match');
+      assertEqual(partialResults[0], '絵', 'Result should be 絵');
     }
 
     console.log('\n=== Test Summary ===');
