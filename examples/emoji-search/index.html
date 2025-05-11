@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>絵文字検索アプリ</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>絵文字検索</h1>
+        <div class="search-container">
+            <input type="text" id="search-input" placeholder="絵文字を検索..." autofocus>
+            <div id="loading-indicator" class="hidden">
+                <div class="spinner"></div>
+                <span>処理中...</span>
+            </div>
+        </div>
+        <div id="status-message"></div>
+        <div id="results-container"></div>
+    </div>
+    <script src="main.js" type="module"></script>
+</body>
+</html>
