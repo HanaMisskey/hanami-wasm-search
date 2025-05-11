@@ -12,7 +12,10 @@
             "import": "./dist/index.js",
             "require": "./dist/index.cjs"
         },
-        "./engine.wasm": "./dist/engine.wasm"
+        "./engine.wasm": {
+            "default": "./dist/engine.wasm",
+            "types": "./dist/engine.d.ts"
+        }
     },
     "files": [
         "dist"

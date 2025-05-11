@@ -1,5 +1,5 @@
 import { resolve } from 'path';
-import { copyFile } from 'fs/promises';
+import { copyFile, writeFile } from 'fs/promises';
 import { defineConfig } from 'vite';
 import { execa } from 'execa';
 import dts from 'vite-plugin-dts';
@@ -22,6 +22,7 @@ export default defineConfig({
             },
             writeBundle: async () => {
                 await copyFile(resolve(srcDir, 'wasm/hanami_wasm_search_bg.wasm'), resolve(distDir, 'engine.wasm'));
+                await writeFile(resolve(distDir, 'engine.d.ts'), 'declare const binary: ArrayBuffer; export default binary;', 'utf-8');
             },
         },
     ],
