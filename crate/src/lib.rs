@@ -174,7 +174,7 @@ impl Index {
         };
         
         // デフォルトの検索結果制限を20に設定
-        let result_limit = limit.unwrap_or(20);
+        let result_limit = limit.unwrap_or(10);
         
         if self.n_docs == 0 {
             return Ok(serde_wasm_bindgen::to_value(&Vec::<String>::new()).unwrap());
