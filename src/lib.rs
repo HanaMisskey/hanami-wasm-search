@@ -4,10 +4,12 @@ use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use wana_kana::ConvertJapanese;
 
 // マッチタイプのフラグを定義（ビットフラグ）
-const MATCH_NAME_EXACT: u8 = 0b1000; // nameと完全一致
-const MATCH_ALIAS_EXACT: u8 = 0b0100; // aliasと完全一致
-const MATCH_NAME_PARTIAL: u8 = 0b0010; // nameと部分一致
-const MATCH_ALIAS_PARTIAL: u8 = 0b0001; // aliasと部分一致
+const MATCH_NAME_EXACT: u8 = 0b100000; // nameと完全一致
+const MATCH_ALIAS_EXACT: u8 = 0b010000; // aliasと完全一致
+const MATCH_NAME_PREFIX: u8 = 0b001000; // nameと前方一致
+const MATCH_ALIAS_PREFIX: u8 = 0b000100; // aliasと前方一致
+const MATCH_NAME_PARTIAL: u8 = 0b000010; // nameと部分一致
+const MATCH_ALIAS_PARTIAL: u8 = 0b000001; // aliasと部分一致
 
 type Postings = HashMap<String, Vec<String>>;
 
@@ -191,6 +193,23 @@ impl Index {
         // オリジナルクエリ用のハッシュセット（高速検索用） - 参照を使うことでメモリ使用量を軽減
         let original_terms: HashSet<&str> = original.iter().map(|s| s.as_str()).collect();
         
+        // クエリトークンがオリジナルから来たかどうかを判定するヘルパー関数
+        fn token_is_from_original_query(token: &str, original_terms: &HashSet<&str>) -> bool {
+            // クエリに完全一致するトークンがある場合
+            if original_terms.contains(token) {
+                return true;
+            }
+            
+            // トークンがクエリのどれかの先頭になっている場合
+            for &original in original_terms.iter() {
+                if original.starts_with(token) {
+                    return true;
+                }
+            }
+            
+            false
+        }
+        
         // クエリを2-gramに変換する
         for term in &original {
             // オリジナルの単語も検索対象に含める - ムーブで所有権を移動し、クローンを回避
@@ -278,12 +297,29 @@ impl Index {
                             *entry |= MATCH_ALIAS_EXACT;
                         }
                     } else {
+                        // 前方一致判定を追加 - ドキュメント名が検索語で始まる場合
+                        if term.len() <= 50 && doc_id.starts_with(term_str) {
+                            *entry |= MATCH_NAME_PREFIX;
+                        } 
                         // 部分一致の判定（より効率的なチェック） - 長い文字列は部分一致チェックを省略
-                        if term.len() <= 50 && doc_id.contains(term_str) {
+                        else if term.len() <= 50 && doc_id.contains(term_str) {
                             *entry |= MATCH_NAME_PARTIAL;
                         } else {
-                            // aliasとの部分一致と判断
-                            *entry |= MATCH_ALIAS_PARTIAL;
+                            // aliasとの前方一致または部分一致を区別して判断
+                            // 注: 実際のaliasデータは検索中にはアクセスできないため、
+                            // ポスティングリストの存在のみで判定する必要がある
+                            
+                            // トークンがキー自体のバイグラムでない場合、前方一致または部分一致を判定
+                            if token_is_from_original_query(term_str, &original_terms) {
+                                // 部分一致と判断するのは2-gramの場合のみ
+                                // 元のクエリからの単語は前方一致として扱う（より優先度が高い）
+                                *entry |= MATCH_ALIAS_PREFIX;
+                            } else if term.len() <= 2 {
+                                // 短い2-gramは部分一致として扱う
+                                // 2文字以下のバイグラムは部分一致の可能性が高い
+                                *entry |= MATCH_ALIAS_PARTIAL;
+                            }
+                            // それ以外の場合はマークしない（部分一致でない）
                         }
                     }
                 }
@@ -329,10 +365,12 @@ impl Index {
                 let match_type = match_types.get(&doc_id).cloned().unwrap_or(0);
                 
                 // マッチタイプに基づいて優先度スコアを計算
-                let priority = ((match_type & MATCH_NAME_EXACT) << 3) | 
-                              ((match_type & MATCH_ALIAS_EXACT) << 1) | 
-                              ((match_type & MATCH_NAME_PARTIAL) >> 1) | 
-                              ((match_type & MATCH_ALIAS_PARTIAL) >> 3);
+                let priority = ((match_type & MATCH_NAME_EXACT) >> 0) | 
+                              ((match_type & MATCH_ALIAS_EXACT) >> 0) |
+                              ((match_type & MATCH_NAME_PREFIX) >> 0) |
+                              ((match_type & MATCH_ALIAS_PREFIX) >> 0) |
+                              ((match_type & MATCH_NAME_PARTIAL) >> 0) | 
+                              ((match_type & MATCH_ALIAS_PARTIAL) >> 0);
                 
                 // 浮動小数点を比較可能なビット表現に変換
                 let score_bits = score.to_bits();
@@ -376,15 +414,19 @@ impl Index {
                 let (_, b_score, b_match) = b;
                 
                 // マッチタイプに基づいて優先度スコアを計算（ビットシフト操作を最適化）
-                let a_priority = ((a_match & MATCH_NAME_EXACT) << 3) | 
-                                ((a_match & MATCH_ALIAS_EXACT) << 1) | 
-                                ((a_match & MATCH_NAME_PARTIAL) >> 1) | 
-                                ((a_match & MATCH_ALIAS_PARTIAL) >> 3);
+                let a_priority = ((a_match & MATCH_NAME_EXACT) >> 0) | 
+                                ((a_match & MATCH_ALIAS_EXACT) >> 0) |
+                                ((a_match & MATCH_NAME_PREFIX) >> 0) |
+                                ((a_match & MATCH_ALIAS_PREFIX) >> 0) |
+                                ((a_match & MATCH_NAME_PARTIAL) >> 0) | 
+                                ((a_match & MATCH_ALIAS_PARTIAL) >> 0);
                                 
-                let b_priority = ((b_match & MATCH_NAME_EXACT) << 3) | 
-                                ((b_match & MATCH_ALIAS_EXACT) << 1) | 
-                                ((b_match & MATCH_NAME_PARTIAL) >> 1) | 
-                                ((b_match & MATCH_ALIAS_PARTIAL) >> 3);
+                let b_priority = ((b_match & MATCH_NAME_EXACT) >> 0) | 
+                                ((b_match & MATCH_ALIAS_EXACT) >> 0) |
+                                ((b_match & MATCH_NAME_PREFIX) >> 0) |
+                                ((b_match & MATCH_ALIAS_PREFIX) >> 0) |
+                                ((b_match & MATCH_NAME_PARTIAL) >> 0) | 
+                                ((b_match & MATCH_ALIAS_PARTIAL) >> 0);
                 
                 // 優先度で比較し、同じ場合はスコアで比較
                 match b_priority.cmp(&a_priority) {
