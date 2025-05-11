@@ -2,7 +2,7 @@
   "name": "@hanamisskey/browser-search",
   "author": "Misskey.flowers",
   "license": "MIT",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "main": "./dist/index.cjs",
   "types": "./dist/index.d.ts",
@@ -11,7 +11,10 @@
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
     },
-    "./engine.wasm": "./dist/engine.wasm"
+    "./engine.wasm": {
+      "default": "./dist/engine.wasm",
+      "types": "./dist/engine.d.ts"
+    }
   },
   "files": [
     "dist"
