@@ -1,0 +1,89 @@
+name: Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version (x.y.z)'
+        required: true
+
+env:
+  VERSION: ${{ github.event.inputs.version }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Install wasm-pack
+        run: cargo install wasm-pack
+
+      - uses: pnpm/action-setup@v4
+        name: Install pnpm
+        with:
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          cache: 'pnpm'
+
+      - name: Install Dependencies
+        run: pnpm install
+
+      - name: Override Version
+        run: |
+          jq ".version |= \"${{ env.VERSION }}\"" package.json > package.json.tmp
+          mv package.json.tmp package.json
+
+      - name: Build
+        run: pnpm build
+
+      - name: Package, Copy Artifact to temp folder
+        run: pnpm pack --json | jq -r '.filename' | xargs -I {} mv {} /tmp/artifact.tgz
+
+      - name: Reset Current Changes
+        run: |
+          git reset --hard
+          git clean -fd
+
+      - name: Checkout Dist Branch
+        uses: actions/checkout@v4
+        with:
+          ref: dist
+
+      - name: Remove Everything in Dist Branch
+        run: rm -rf *
+
+      - name: Copy Artifact to Dist Branch
+        run: cp -r /tmp/artifact.tgz . && tar -xzf artifact.tgz
+
+      - name: Commit Changes
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+          git add .
+          git commit -m "chore: update icons-webfont"
+          git push origin dist
+
+      - name: Tag on Dist Branch
+        run: |
+          git tag $(jq -r ".version" package.json)
+          git push origin dist --tags
