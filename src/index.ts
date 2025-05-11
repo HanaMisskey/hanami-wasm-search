@@ -1,5 +1,5 @@
 import { defu } from 'defu';
-import type { Index } from '@/wasm/hanami_wasm_search.js';
+import type { Index, InitInput } from '@/wasm/hanami_wasm_search.js';
 
 type DeepPartial<T> = {
     [K in keyof T]?: T[K] extends Record<PropertyKey, unknown> ? DeepPartial<T[K]> : T[K] extends null ? undefined : T[K] | undefined;
@@ -10,7 +10,7 @@ type _SearchEngineConfig = {
         k1: number;
         b: number;
     };
-    wasmModule: WebAssembly.Module | null;
+    wasmInput: InitInput | null;
     preCompiledIndex: Uint8Array | null;
 };
 
@@ -57,27 +57,22 @@ export async function createSearchEngine(opts?: SearchEngineConfig): Promise<Sea
             k1: 1.2,
             b: 0.75,
         },
-        wasmModule: null,
+        wasmInput: null,
         preCompiledIndex: null,
     });
 
-    let wasmModule: WebAssembly.Module;
+    let wasmInput: InitInput;
 
-    if (_opts.wasmModule != null) {
+    if (_opts.wasmInput != null) {
         // WebAssemblyインスタンスが渡されたらそれを使用
-        wasmModule = _opts.wasmModule;
+        wasmInput = _opts.wasmInput;
     } else {
         const { default: wasmUrl } = await import('@/wasm/hanami_wasm_search_bg.wasm?url');
-        wasmModule = await fetch(wasmUrl).then((response) => {
-            if (!response.ok) {
-                throw new Error(`Failed to fetch WebAssembly module: ${response.statusText}`);
-            }
-            return response.arrayBuffer();
-        });
+        wasmInput = await fetch(wasmUrl);
     }
 
     const { default: init, Index } = await import('@/wasm/hanami_wasm_search.js');
-    await init(wasmModule);
+    await init(wasmInput);
 
     if (_opts.preCompiledIndex != null) {
         // プレコンパイルされたインデックスが渡されたらそれを使用して初期化
