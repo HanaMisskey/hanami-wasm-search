@@ -26,10 +26,10 @@ async function o(e) {
   if (t.wasmInput != null)
     a = t.wasmInput;
   else {
-    const { default: r } = await import("./chunks/hanami_wasm_search_bg.BxXkqv7Y.js");
+    const { default: r } = await import("./chunks/hanami_wasm_search_bg.D3c91LWe.js");
     a = await fetch(r);
   }
-  const { default: m, Index: n } = await import("./chunks/hanami_wasm_search.Dib3_Qpa.js");
+  const { default: m, Index: n } = await import("./chunks/hanami_wasm_search.CYc_nUFc.js");
   if (await m(a), t.preCompiledIndex != null) {
     const r = n.load(t.preCompiledIndex);
     return r.set_params(t.params.k1, t.params.b), s(r);
