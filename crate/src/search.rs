@@ -11,23 +11,7 @@ pub struct SearchEngine<'a> {
 }
 
 impl<'a> SearchEngine<'a> {
-    /// 単一クエリの早期終了最適化
-    pub fn search_single_exact(&self, query: &str) -> Option<Vec<String>> {
-        // 名前の完全一致（O(1)）
-        let query_arc = Arc::new(query.to_string());
-        if self.doc_aliases.contains_key(&query_arc) {
-            return Some(vec![query.to_string()]);
-        }
-        
-        // エイリアスの完全一致（O(1)）
-        if let Some(doc_names) = self.cache.alias_to_doc.get(&query_arc) {
-            if !doc_names.is_empty() {
-                return Some(vec![doc_names[0].to_string()]);
-            }
-        }
-        
-        None
-    }
+
 
     /// AND検索の実装
     pub fn search_and(&mut self, keywords: Vec<&str>, limit: usize) -> Vec<String> {
