@@ -111,6 +111,23 @@ describe('Search Engine Test', () => {
         expect(results[0]).toBe('絵');
     });
 
+    it('Romaji search for hiragana aliases', async () => {
+        const engine = await createSearchEngine();
+        
+        // ひらがなを含むエイリアスでドキュメントを追加
+        engine.addDocument('polite_emoji', ['ですわ', 'お嬢様', 'desuwa']);
+        
+        // "desuwa" で検索して "ですわ" を含むドキュメントがヒットすることを確認
+        let results = await engine.searchWithLimit('desuwa', 10);
+        expect(results).toHaveLength(1);
+        expect(results[0]).toBe('polite_emoji');
+        
+        // 部分一致でも動作することを確認
+        results = await engine.searchWithLimit('suwa', 10);
+        expect(results).toHaveLength(1);
+        expect(results[0]).toBe('polite_emoji');
+    });
+
     it('Migration from old format', async () => {
         // 新形式のエンジンでデータを作成
         const engine = await setupTestIndex();
