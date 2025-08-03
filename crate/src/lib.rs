@@ -20,6 +20,26 @@ struct EmojisData {
 pub struct Index {
     doc_aliases: HashMap<String, Vec<String>>,
     n_docs: usize,
+    #[serde(default = "default_version")]
+    version: u32,
+}
+
+fn default_version() -> u32 {
+    2  // Current version
+}
+
+// 旧バージョンのIndex構造体（マイグレーション用）
+#[derive(Deserialize)]
+#[allow(dead_code)]
+struct OldIndex {
+    postings: HashMap<String, Vec<String>>,
+    doc_len: HashMap<String, usize>,
+    doc_aliases: HashMap<String, Vec<String>>,
+    n_docs: usize,
+    k1: f32,
+    b: f32,
+    #[serde(default)]
+    version: u32,
 }
 
 fn log_json_error(json: &str, error: &serde_json::Error) -> String {
@@ -44,7 +64,8 @@ impl Index {
     pub fn new() -> Index {
         Index { 
             doc_aliases: HashMap::default(),
-            n_docs: 0, 
+            n_docs: 0,
+            version: 2,
         }
     }
 
@@ -245,7 +266,29 @@ impl Index {
         ))
     }
     pub fn load(bytes: js_sys::Uint8Array) -> Result<Index, JsValue> {
-        bincode::deserialize(&bytes.to_vec()).map_err(|e| JsValue::from_str(&e.to_string()))
+        let bytes_vec = bytes.to_vec();
+        
+        // まず新しい形式で読み込みを試みる
+        match bincode::deserialize::<Index>(&bytes_vec) {
+            Ok(index) => Ok(index),
+            Err(_) => {
+                // 失敗したら旧形式として読み込みを試みる
+                match bincode::deserialize::<OldIndex>(&bytes_vec) {
+                    Ok(old_index) => {
+                        // 旧形式から新形式へマイグレーション
+                        Ok(Index {
+                            doc_aliases: old_index.doc_aliases,
+                            n_docs: old_index.n_docs,
+                            version: 2,
+                        })
+                    }
+                    Err(e) => Err(JsValue::from_str(&format!(
+                        "Failed to load index: {}. The index format may be incompatible.",
+                        e
+                    )))
+                }
+            }
+        }
     }
 
     fn remove_doc(&mut self, doc_id: String) {
@@ -316,5 +359,10 @@ impl Index {
     pub fn clear_index(&mut self) {
         self.doc_aliases.clear();
         self.n_docs = 0;
+    }
+    
+    #[wasm_bindgen(js_name = "getVersion")]
+    pub fn get_version(&self) -> u32 {
+        self.version
     }
 }

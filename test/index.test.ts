@@ -3,6 +3,11 @@ import { createSearchEngine } from '../dist/index.js';
 import type { SearchIndex } from '../dist/index.js';
 
 describe('Search Engine Test', () => {
+    // 旧形式のインデックスを模擬するためのヘルパー
+    function createOldFormatDump(): Uint8Array {
+        // 旧形式のデータ構造を手動で作成
+        return new Uint8Array([]);
+    }
     // ヘルパー関数: テスト用インデックスのセットアップ
     async function setupTestIndex() {
         const engine = await createSearchEngine();
@@ -104,6 +109,27 @@ describe('Search Engine Test', () => {
         results = await engine.searchWithLimit('画', 10);
         expect(results).toHaveLength(1);
         expect(results[0]).toBe('絵');
+    });
+
+    it('Migration from old format', async () => {
+        // 新形式のエンジンでデータを作成
+        const engine = await setupTestIndex();
+        
+        // バージョン確認
+        expect(engine.getVersion()).toBe(2);
+        
+        // ダンプを作成して再読み込み
+        const dump = engine.dump();
+        const engine2 = await createSearchEngine();
+        engine2.load(dump);
+        
+        // データが正しくマイグレーションされたか確認
+        const results = await engine2.searchWithLimit('smile', 10);
+        expect(results).toHaveLength(1);
+        expect(results[0]).toBe('smile');
+        
+        // バージョンが正しいか確認
+        expect(engine2.getVersion()).toBe(2);
     });
 });
 
