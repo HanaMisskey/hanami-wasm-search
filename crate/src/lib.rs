@@ -312,27 +312,50 @@ impl Index {
                         (tf + self.k1*(1.0 - self.b + self.b*len/avg_len));
                     
                     // クエリと完全一致する場合のボーナス
-                    let exact_match_bonus = if original.iter().any(|q| q == doc_id) {
-                        10.0
-                    } else {
-                        0.0
-                    };
+                    // ただし、ドキュメントがクエリより短い場合はペナルティ
+                    let mut exact_match_bonus = 0.0;
+                    for q in &original {
+                        if q == doc_id {
+                            exact_match_bonus = 10.0;
+                        } else if doc_id.len() < q.len() && q.contains(doc_id) {
+                            // ドキュメントがクエリより短く、クエリに含まれる場合はペナルティ
+                            // 例: クエリ「ですわ」に対して「です」
+                            exact_match_bonus = -5.0;
+                        }
+                    }
                     
                     // クエリの完全包含チェック
-                    let contains_full_query = original.iter().any(|q| {
-                        doc_id.contains(q) || 
-                        self.doc_aliases.get(doc_id)
-                            .map(|aliases| aliases.iter().any(|a| a.contains(q)))
-                            .unwrap_or(false)
-                    });
+                    let mut max_containment_bonus: f32 = 0.0;
                     
-                    let containment_bonus = if contains_full_query {
-                        5.0
-                    } else {
-                        0.0
-                    };
+                    for q in &original {
+                        // クエリがドキュメント名に含まれているかチェック
+                        if doc_id.contains(q) {
+                            // クエリの長さに基づいてボーナスを計算
+                            // 長いクエリほど高いボーナス
+                            let query_len_ratio = q.len() as f32 / doc_id.len() as f32;
+                            let bonus = 5.0 + (query_len_ratio * 10.0);
+                            max_containment_bonus = max_containment_bonus.max(bonus);
+                        }
+                        
+                        // エイリアスもチェック
+                        if let Some(aliases) = self.doc_aliases.get(doc_id) {
+                            for alias in aliases {
+                                if alias.contains(q) {
+                                    let query_len_ratio = q.len() as f32 / alias.len() as f32;
+                                    let bonus = 5.0 + (query_len_ratio * 10.0);
+                                    max_containment_bonus = max_containment_bonus.max(bonus);
+                                } else if alias.len() < q.len() && q.contains(alias) {
+                                    // エイリアスがクエリより短く、クエリに含まれる場合はペナルティ
+                                    let penalty = -3.0;
+                                    if exact_match_bonus >= 0.0 {
+                                        exact_match_bonus = penalty;
+                                    }
+                                }
+                            }
+                        }
+                    }
                     
-                    *scores.entry(doc_id.clone()).or_insert(0.0) += score + exact_match_bonus + containment_bonus;
+                    *scores.entry(doc_id.clone()).or_insert(0.0) += score + exact_match_bonus + max_containment_bonus;
                     
                     // マッチ種類を記録（ビットフラグを使用）
                     let entry = match_types.entry(doc_id.clone()).or_insert(0);
