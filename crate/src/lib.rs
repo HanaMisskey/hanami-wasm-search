@@ -11,6 +11,14 @@ const MATCH_ALIAS_PREFIX: u8 = 0b000100; // aliasと前方一致
 const MATCH_NAME_PARTIAL: u8 = 0b000010; // nameと部分一致
 const MATCH_ALIAS_PARTIAL: u8 = 0b000001; // aliasと部分一致
 
+// 優先度スコア定数
+const PRIORITY_NAME_EXACT: u8 = 100;
+const PRIORITY_ALIAS_EXACT: u8 = 90;
+const PRIORITY_NAME_PREFIX: u8 = 80;
+const PRIORITY_ALIAS_PREFIX: u8 = 70;
+const PRIORITY_NAME_PARTIAL: u8 = 60;
+const PRIORITY_ALIAS_PARTIAL: u8 = 50;
+
 type Postings = HashMap<String, Vec<String>>;
 
 // 2-gram（バイグラム）トークン化関数
@@ -47,6 +55,25 @@ fn tokenize_2gram(text: &str) -> Vec<String> {
     tokens
 }
 
+// 優先度を計算するヘルパー関数
+fn calculate_priority(match_type: u8) -> u8 {
+    if match_type & MATCH_NAME_EXACT != 0 { 
+        PRIORITY_NAME_EXACT 
+    } else if match_type & MATCH_ALIAS_EXACT != 0 { 
+        PRIORITY_ALIAS_EXACT 
+    } else if match_type & MATCH_NAME_PREFIX != 0 { 
+        PRIORITY_NAME_PREFIX 
+    } else if match_type & MATCH_ALIAS_PREFIX != 0 { 
+        PRIORITY_ALIAS_PREFIX 
+    } else if match_type & MATCH_NAME_PARTIAL != 0 { 
+        PRIORITY_NAME_PARTIAL 
+    } else if match_type & MATCH_ALIAS_PARTIAL != 0 { 
+        PRIORITY_ALIAS_PARTIAL 
+    } else { 
+        0 
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct Doc {
     name: String,
@@ -64,6 +91,7 @@ struct EmojisData {
 pub struct Index {
     postings: Postings,
     doc_len: HashMap<String, usize>,
+    doc_aliases: HashMap<String, Vec<String>>,
     n_docs: usize,
     k1: f32,
     b: f32,
@@ -94,7 +122,14 @@ impl Index {
 
     #[wasm_bindgen(js_name = "newWithParams")]
     pub fn with_params(k1: f32, b: f32) -> Index {
-        Index { postings: HashMap::default(), doc_len: HashMap::default(), n_docs: 0, k1, b }
+        Index { 
+            postings: HashMap::default(), 
+            doc_len: HashMap::default(), 
+            doc_aliases: HashMap::default(),
+            n_docs: 0, 
+            k1, 
+            b 
+        }
     }
 
     pub fn set_params(&mut self, k1: f32, b: f32) { self.k1 = k1; self.b = b; }
@@ -114,6 +149,7 @@ impl Index {
             let estimated_tokens = emoji_count * 20;
             self.postings = HashMap::with_capacity_and_hasher(estimated_tokens, Default::default());
             self.doc_len = HashMap::with_capacity_and_hasher(emoji_count, Default::default());
+            self.doc_aliases = HashMap::with_capacity_and_hasher(emoji_count, Default::default());
         }
         
         for doc in data.emojis {
@@ -123,6 +159,7 @@ impl Index {
             
             // 名前も含めたトークン数を記録
             self.doc_len.insert(doc_name.clone(), doc.aliases.len() + 1);
+            self.doc_aliases.insert(doc_name.clone(), doc.aliases.clone());
             self.n_docs += 1;
             
             // 推定トークン数から HashSet サイズを事前確保
@@ -273,7 +310,29 @@ impl Index {
                     let len = *self.doc_len.get(doc_id).unwrap_or(&1) as f32;
                     let score = idf * (tf*(self.k1+1.0)) /
                         (tf + self.k1*(1.0 - self.b + self.b*len/avg_len));
-                    *scores.entry(doc_id.clone()).or_insert(0.0) += score;
+                    
+                    // クエリと完全一致する場合のボーナス
+                    let exact_match_bonus = if original.iter().any(|q| q == doc_id) {
+                        10.0
+                    } else {
+                        0.0
+                    };
+                    
+                    // クエリの完全包含チェック
+                    let contains_full_query = original.iter().any(|q| {
+                        doc_id.contains(q) || 
+                        self.doc_aliases.get(doc_id)
+                            .map(|aliases| aliases.iter().any(|a| a.contains(q)))
+                            .unwrap_or(false)
+                    });
+                    
+                    let containment_bonus = if contains_full_query {
+                        5.0
+                    } else {
+                        0.0
+                    };
+                    
+                    *scores.entry(doc_id.clone()).or_insert(0.0) += score + exact_match_bonus + containment_bonus;
                     
                     // マッチ種類を記録（ビットフラグを使用）
                     let entry = match_types.entry(doc_id.clone()).or_insert(0);
@@ -355,12 +414,7 @@ impl Index {
                 let match_type = match_types.get(&doc_id).cloned().unwrap_or(0);
                 
                 // マッチタイプに基づいて優先度スコアを計算
-                let priority = ((match_type & MATCH_NAME_EXACT) >> 0) | 
-                              ((match_type & MATCH_ALIAS_EXACT) >> 0) |
-                              ((match_type & MATCH_NAME_PREFIX) >> 0) |
-                              ((match_type & MATCH_ALIAS_PREFIX) >> 0) |
-                              ((match_type & MATCH_NAME_PARTIAL) >> 0) | 
-                              ((match_type & MATCH_ALIAS_PARTIAL) >> 0);
+                let priority = calculate_priority(match_type);
                 
                 // 浮動小数点を比較可能なビット表現に変換
                 let score_bits = score.to_bits();
@@ -404,19 +458,8 @@ impl Index {
                 let (_, b_score, b_match) = b;
                 
                 // マッチタイプに基づいて優先度スコアを計算
-                let a_priority = ((a_match & MATCH_NAME_EXACT) >> 0) | 
-                                ((a_match & MATCH_ALIAS_EXACT) >> 0) |
-                                ((a_match & MATCH_NAME_PREFIX) >> 0) |
-                                ((a_match & MATCH_ALIAS_PREFIX) >> 0) |
-                                ((a_match & MATCH_NAME_PARTIAL) >> 0) | 
-                                ((a_match & MATCH_ALIAS_PARTIAL) >> 0);
-                                
-                let b_priority = ((b_match & MATCH_NAME_EXACT) >> 0) | 
-                                ((b_match & MATCH_ALIAS_EXACT) >> 0) |
-                                ((b_match & MATCH_NAME_PREFIX) >> 0) |
-                                ((b_match & MATCH_ALIAS_PREFIX) >> 0) |
-                                ((b_match & MATCH_NAME_PARTIAL) >> 0) | 
-                                ((b_match & MATCH_ALIAS_PARTIAL) >> 0);
+                let a_priority = calculate_priority(*a_match);
+                let b_priority = calculate_priority(*b_match);
                 
                 // 優先度で比較し、同じ場合はスコアで比較
                 match b_priority.cmp(&a_priority) {
@@ -463,6 +506,9 @@ impl Index {
         } else {
             return;
         };
+        
+        // エイリアス情報も削除
+        self.doc_aliases.remove(&doc_id);
         
         // tokenize関数をこのスコープで使うため、id用のトークンを準備
         let mut tokens_to_check = Vec::with_capacity(doc_len + 2);
@@ -534,6 +580,7 @@ impl Index {
         
         // 名前も含めたトークン数を記録
         self.doc_len.insert(doc_name.clone(), aliases.len() + 1); // +1 for name
+        self.doc_aliases.insert(doc_name.clone(), aliases.clone());
         self.n_docs += 1;
         
         // 推定トークン数から HashSet サイズを事前確保
@@ -591,6 +638,7 @@ impl Index {
         // 現在のインデックスをクリア
         self.postings.clear();
         self.doc_len.clear();
+        self.doc_aliases.clear();
         self.n_docs = 0;
         
         // 新しいドキュメントを追加
@@ -601,6 +649,7 @@ impl Index {
     pub fn clear_index(&mut self) {
         self.postings.clear();
         self.doc_len.clear();
+        self.doc_aliases.clear();
         self.n_docs = 0;
     }
 }
