@@ -183,8 +183,8 @@ impl Index {
 
     #[wasm_bindgen(js_name = "searchNoLimit")]
     pub fn search_no_limit(&mut self, query_json: &str) -> Result<JsValue, JsValue> {
-        // 元の関数をラップし、制限なし（None）で呼び出す
-        self.search(query_json, None)
+        // すべてのドキュメントを対象に検索する
+        self.search(query_json, Some(self.n_docs))
     }
 
     #[wasm_bindgen(js_name = "searchWithLimit")]
