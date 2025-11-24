@@ -27,14 +27,14 @@
         "benchmark": "node scripts/benchmark.js"
     },
     "devDependencies": {
-        "@types/node": "^22.15.17",
+        "@types/node": "^24.10.1",
         "@types/which": "^3.0.4",
-        "execa": "^9.5.3",
-        "typescript": "^5.8.3",
-        "vite": "^6.3.5",
-        "vite-plugin-dts": "^4.5.3",
-        "vitest": "^3.1.3",
-        "which": "^5.0.0"
+        "execa": "^9.6.0",
+        "typescript": "^5.9.3",
+        "vite": "^7.2.4",
+        "vite-plugin-dts": "^4.5.4",
+        "vitest": "^4.0.13",
+        "which": "^6.0.0"
     },
     "dependencies": {
         "defu": "^6.1.4"
