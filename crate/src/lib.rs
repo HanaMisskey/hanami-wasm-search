@@ -63,7 +63,7 @@ pub struct Index {
 }
 
 fn default_version() -> u32 {
-    2  // Current version
+    3  // Current version (rich index)
 }
 
 // 旧バージョンのIndex構造体（マイグレーション用）
@@ -103,7 +103,7 @@ impl Index {
         Index { 
             doc_aliases: HashMap::default(),
             n_docs: 0,
-            version: 2,
+            version: 3,
             cache: StringCache::new(),
         }
     }
@@ -138,9 +138,7 @@ impl Index {
         }
         
         // キャッシュを再構築
-        self.rebuild_cache();
-        
-        Ok(())
+        self.rebuild_cache()
     }
 
     #[wasm_bindgen(js_name = "search")]
@@ -205,7 +203,7 @@ impl Index {
         match bincode::deserialize::<Index>(&bytes_vec) {
             Ok(mut index) => {
                 // キャッシュを再構築
-                index.rebuild_cache();
+                index.rebuild_cache()?;
                 Ok(index)
             },
             Err(_) => {
@@ -220,11 +218,11 @@ impl Index {
                                 })
                                 .collect(),
                             n_docs: old_index.n_docs,
-                            version: 2,
+                            version: 3,
                             cache: StringCache::new(),
                         };
                         // キャッシュを再構築
-                        index.rebuild_cache();
+                        index.rebuild_cache()?;
                         Ok(index)
                     }
                     Err(e) => Err(JsValue::from_str(&format!(
@@ -250,6 +248,7 @@ impl Index {
         let doc_id_arc = Arc::new(doc_id.to_string());
         if self.doc_aliases.contains_key(&doc_id_arc) {
             self.remove_doc(doc_id.to_owned());
+            self.rebuild_cache()?;
             Ok(true)
         } else {
             Ok(false)
@@ -277,7 +276,7 @@ impl Index {
         self.doc_aliases.insert(doc_name, arc_aliases);
         self.n_docs += 1;
         
-        Ok(())
+        self.rebuild_cache()
     }
 
     #[wasm_bindgen(js_name = "updateDocument")]
@@ -328,34 +327,16 @@ impl Index {
     // 内部メソッド（非公開）
     
     /// キャッシュを再構築
-    fn rebuild_cache(&mut self) {
+    fn rebuild_cache(&mut self) -> Result<(), JsValue> {
+        // 文字列キャッシュも含めて再構築
         self.cache.clear();
-        
-        for (doc_name, aliases) in &self.doc_aliases {
-            // ドキュメント名のキャッシュを構築
-            self.cache.get_lowercase(doc_name);
-            self.cache.get_hiragana(doc_name);
-            
-            // エイリアスのキャッシュと逆引きインデックスを構築
-            for alias in aliases {
-                self.cache.get_lowercase(alias);
-                self.cache.get_hiragana(alias);
-                self.cache.add_alias_mapping(Arc::clone(alias), Arc::clone(doc_name));
-            }
-        }
+
+        self.cache.rebuild_lexicon(&self.doc_aliases)
+            .map_err(|e| JsValue::from_str(&format!("Failed to rebuild index cache: {}", e)))
     }
     
-    /// 単一ドキュメントのキャッシュを更新
-    fn update_cache_for_document(&mut self, doc_name: &Arc<String>, aliases: &[Arc<String>]) {
-        // ドキュメント名のキャッシュを追加
-        self.cache.get_lowercase(doc_name);
-        self.cache.get_hiragana(doc_name);
-        
-        // エイリアスのキャッシュと逆引きインデックスを追加
-        for alias in aliases {
-            self.cache.get_lowercase(alias);
-            self.cache.get_hiragana(alias);
-            self.cache.add_alias_mapping(Arc::clone(alias), Arc::clone(doc_name));
-        }
+    /// 単一ドキュメントのキャッシュを更新（現状はフルリビルドに委譲）
+    fn update_cache_for_document(&mut self, _doc_name: &Arc<String>, _aliases: &[Arc<String>]) {
+        // 小規模コーパスのため、インクリメンタル更新よりもフルリビルドを優先
     }
 }

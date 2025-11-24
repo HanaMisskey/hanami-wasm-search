@@ -133,7 +133,7 @@ describe('Search Engine Test', () => {
         const engine = await setupTestIndex();
         
         // バージョン確認
-        expect(engine.getVersion()).toBe(2);
+        expect(engine.getVersion()).toBe(3);
         
         // ダンプを作成して再読み込み
         const dump = engine.dump();
@@ -146,8 +146,7 @@ describe('Search Engine Test', () => {
         expect(results[0]).toBe('smile');
         
         // バージョンが正しいか確認
-        expect(engine2.getVersion()).toBe(2);
+        expect(engine2.getVersion()).toBe(3);
     });
 });
-
 

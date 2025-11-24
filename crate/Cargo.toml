@@ -19,6 +19,7 @@ bincode = "1"
 js-sys = "0.3"
 wana_kana = "4"
 rustc-hash = "2.1.1"
+fst = { version = "0.4", default-features = true, features = ["levenshtein"] }
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
