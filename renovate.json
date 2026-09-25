@@ -1,0 +1,25 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits"
+  ],
+  "timezone": "Asia/Tokyo",
+  "schedule": [
+    "* 0-6 * * 1"
+  ],
+  "enabledManagers": [
+    "npm",
+    "cargo",
+    "github-actions"
+  ],
+  "prConcurrentLimit": 3,
+  "labels": [
+    "dependencies"
+  ],
+  "automerge": false,
+  "lockFileMaintenance": {
+    "enabled": true
+  }
+}
