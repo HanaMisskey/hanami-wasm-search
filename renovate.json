@@ -1,0 +1,11 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "local>HanaMisskey/renovate-config"
+  ],
+  "enabledManagers": [
+    "npm",
+    "cargo",
+    "github-actions"
+  ]
+}
